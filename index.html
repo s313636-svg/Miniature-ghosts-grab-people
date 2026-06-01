@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>微型鬼抓人：黑白宿命戰（碎石導航與終結雙子版）</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #121212;
+            color: #ffffff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+
+        #game-container {
+            text-align: center;
+            background: #1e1e1e;
+            padding: 15px;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.7);
+        }
+
+        #hud {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            margin-bottom: 12px;
+            font-size: 0.95rem;
+            background: #2d2d2d;
+            padding: 10px 20px;
+            border-radius: 8px;
+            border: 1px solid #3d3d3d;
+            width: 400px;
+            box-sizing: border-box;
+        }
+
+        .hud-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 20px;
+        }
+
+        .status-highlight {
+            font-weight: bold;
+        }
+
+        #game-canvas {
+            background-color: #000000;
+            border: 3px solid #333;
+            border-radius: 6px;
+            display: block;
+            margin: 0 auto;
+            box-shadow: inset 0 0 20px rgba(0,0,0,1);
+        }
+
+        #controls-hint {
+            margin-top: 10px;
+            color: #888;
+            font-size: 0.8rem;
+            max-width: 400px;
+            line-height: 1.4;
+        }
+
+        .overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.94);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+            backdrop-filter: blur(5px);
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        .overlay h2 {
+            font-size: 1.8rem;
+            margin-bottom: 12px;
+            text-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            text-align: center;
+        }
+
+        .overlay p {
+            font-size: 1rem;
+            margin-bottom: 25px;
+            max-width: 320px;
+            text-align: center;
+            line-height: 1.6;
+            color: #ccc;
+        }
+
+        .btn {
+            background: #ff4757;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            font-size: 1rem;
+            font-weight: bold;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 4px 15px rgba(255, 71, 87, 0.4);
+        }
+
+        .btn:hover {
+            background: #ff6b81;
+            transform: scale(1.05);
+        }
+
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <div id="hud">
+            <div class="hud-row">
+                <div>關卡: <span id="level-val" style="color: #eccc68;">1</span>/20</div>
+                <div>剩餘時間: <span id="time-val" style="color: #ffa502;">30</span>s</div>
+            </div>
+            <div class="hud-row">
+                <div>身分: <span id="role-val" class="status-highlight">未知</span></div>
+                <div>狀態: <span id="respawn-hint" style="color: #555;">戰鬥中</span></div>
+            </div>
+        </div>
+
+        <canvas id="game-canvas" width="400" height="400"></canvas>
+        
+        <div id="controls-hint">操作：WASD。NPC鬼具備碎石繞行AI！最後五關強制壓制為2個頂尖死敵！</div>
+    </div>
+
+    <div id="menu-overlay" class="overlay">
+        <h2 id="overlay-title">微型鬼抓人：碎石終結戰</h2>
+        <p id="overlay-desc">NPC鬼學會順著碎石滑動繞行，不再卡死！第16-20關進入「雙子終結戰」，全場只留下2個極限個體。滿分 100 分！</p>
+        <button id="start-btn" class="btn">接受命運</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('game-canvas');
+        const ctx = canvas.getContext('2d');
+
+        const levelVal = document.getElementById('level-val');
+        const roleVal = document.getElementById('role-val');
+        const timeVal = document.getElementById('time-val');
+        const respawnHint = document.getElementById('respawn-hint');
+        const menuOverlay = document.getElementById('menu-overlay');
+        const overlayTitle = document.getElementById('overlay-title');
+        const overlayDesc = document.getElementById('overlay-desc');
+        const startBtn = document.getElementById('start-btn');
+
+        let currentLevel = 1;
+        const maxLevels = 20;
+        
+        let totalScoreRaw = 0; 
+        let totalDeaths = 0; 
+        let levelTimeElapsed = 0; 
+        let timeLeft = 30; 
+        
+        let gameActive = false;
+        let playerRole = '未定'; 
+        let gameTimer = null;
+        let isInvulnerable = false; 
+        let invulnerableTimer = 0;
+
+        const player = {
+            x: 200, y: 200, 
+            radius: 6,
+            speed: 3, 
+            color: '#1e90ff' 
+        };
+
+        const obstacles = [
+            { type: 'rect', x: 40, y: 40, width: 15, height: 15 },
+            { type: 'rect', x: 120, y: 30, width: 10, height: 30 },
+            { type: 'circle', x: 80, y: 110, radius: 10 },
+            { type: 'circle', x: 160, y: 70, radius: 8 },
+            { type: 'rect', x: 50, y: 160, width: 25, height: 10 },
+
+            { type: 'rect', x: 240, y: 50, width: 30, height: 10 },
+            { type: 'circle', x: 320, y: 40, radius: 12 },
+            { type: 'rect', x: 280, y: 120, width: 15, height: 15 },
+            { type: 'circle', x: 350, y: 150, radius: 9 },
+
+            { type: 'rect', x: 30, y: 240, width: 12, height: 25 },
+            { type: 'circle', x: 70, y: 320, radius: 11 },
+            { type: 'rect', x: 130, y: 260, width: 20, height: 20 },
+            { type: 'circle', x: 150, y: 340, radius: 8 },
+            { type: 'rect', x: 60, y: 370, width: 40, height: 8 },
+
+            { type: 'rect', x: 250, y: 250, width: 16, height: 16 },
+            { type: 'circle', x: 340, y: 230, radius: 10 },
+            { type: 'rect', x: 220, y: 320, width: 12, height: 35 },
+            { type: 'circle', x: 310, y: 330, radius: 12 },
+            { type: 'rect', x: 360, y: 310, width: 20, height: 12 }
+        ];
+
+        let npcs = [];
+
+        const keys = {};
+        window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+        window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+        startBtn.addEventListener('click', () => {
+            if (currentLevel > maxLevels) {
+                currentLevel = 1;
+                totalScoreRaw = 0;
+                totalDeaths = 0;
+                playerRole = '未定'; 
+            }
+            menuOverlay.classList.add('hidden');
+            startLevel();
+        });
+
+        function checkObstacleCollision(x, y, radius) {
+            let posX = x;
+            let posY = y;
+            let collided = false;
+            let normalX = 0;
+            let normalY = 0;
+
+            obstacles.forEach(obs => {
+                if (obs.type === 'rect') {
+                    let closestX = Math.max(obs.x, Math.min(posX, obs.x + obs.width));
+                    let closestY = Math.max(obs.y, Math.min(posY, obs.y + obs.height));
+                    let distanceX = posX - closestX;
+                    let distanceY = posY - closestY;
+                    let distance = Math.hypot(distanceX, distanceY);
+
+                    if (distance < radius && distance > 0) {
+                        collided = true;
+                        let overlap = radius - distance;
+                        normalX = distanceX / distance;
+                        normalY = distanceY / distance;
+                        posX += normalX * overlap;
+                        posY += normalY * overlap;
+                    } else if (distance === 0) {
+                        collided = true;
+                        posX = obs.x - radius;
+                    }
+                } else if (obs.type === 'circle') {
+                    let distance = Math.hypot(posX - obs.x, posY - obs.y);
+                    let minDist = radius + obs.radius;
+                    if (distance < minDist && distance > 0) {
+                        collided = true;
+                        let overlap = minDist - distance;
+                        normalX = (posX - obs.x) / distance;
+                        normalY = (posY - obs.y) / distance;
+                        posX += normalX * overlap;
+                        posY += normalY * overlap;
+                    }
+                }
+            });
+
+            return { x: posX, y: posY, collided: collided, nX: normalX, nY: normalY };
+        }
+
+        function getSafeRandomPosition(radius, isGhost, tempHumans, tempGhosts) {
+            let attempts = 0;
+            while (attempts < 200) {
+                let rx = Math.random() * (canvas.width - 30) + 15;
+                let ry = Math.random() * (canvas.height - 30) + 15;
+                
+                if (!isGhost) {
+                    let nearCorner = (rx < 25 && ry < 25) || 
+                                     (rx > canvas.width - 25 && ry < 25) || 
+                                     (rx < 25 && ry > canvas.height - 25) || 
+                                     (rx > canvas.width - 25 && ry > canvas.height - 25);
+                    if (nearCorner) {
+                        attempts++;
+                        continue;
+                    }
+                }
+
+                let res = checkObstacleCollision(rx, ry, radius);
+                let tooClose = false;
+                const safeDistance = 100;
+
+                if (isGhost) {
+                    for (let h of tempHumans) {
+                        if (Math.hypot(res.x - h.x, res.y - h.y) < safeDistance) {
+                            tooClose = true; break;
+                        }
+                    }
+                } else {
+                    for (let g of tempGhosts) {
+                        if (Math.hypot(res.x - g.x, res.y - g.y) < safeDistance) {
+                            tooClose = true; break;
+                        }
+                    }
+                }
+
+                if (!tooClose) {
+                    return res;
+                }
+                attempts++;
+            }
+            return checkObstacleCollision(Math.random() * (canvas.width - 40) + 20, Math.random() * (canvas.height - 40) + 20, radius);
+        }
+
+        function startLevel() {
+            if (currentLevel === 1 && playerRole === '未定') {
+                playerRole = Math.random() < 0.5 ? '人' : '鬼';
+            }
+
+            isInvulnerable = false;
+            npcs = [];
+            timeLeft = 30; 
+            levelTimeElapsed = 0;
+
+            let bornHumans = [];
+            let bornGhosts = [];
+
+            if (playerRole === '人') {
+                let res = getSafeRandomPosition(player.radius, false, [player], bornGhosts);
+                player.x = res.x; player.y = res.y;
+                bornHumans.push(player);
+            } else {
+                let res = getSafeRandomPosition(player.radius, true, bornHumans, [player]);
+                player.x = res.x; player.y = res.y;
+                bornGhosts.push(player);
+            }
+
+            if (playerRole === '人') {
+                // 🌟 核心修正：最後5關（16~20關）強制固定為 2 隻鬼魔王，其餘關卡隨等級遞增
+                let ghostCount = (currentLevel >= 16) ? 2 : (1 + Math.floor(currentLevel * 0.35)); 
+                
+                // 鬼速度比例：隨著關卡進展從 75% 線性提升到 95%
+                let ghostSpeedRatio = 0.75 + ((currentLevel - 1) * (0.20 / 19));
+                let ghostSpeed = player.speed * ghostSpeedRatio;
+
+                for (let i = 0; i < ghostCount; i++) {
+                    let res = getSafeRandomPosition(6, true, bornHumans, bornGhosts);
+                    let ghostNpc = {
+                        x: res.x, y: res.y,
+                        radius: 6,
+                        speed: ghostSpeed, 
+                        color: '#ff4757', 
+                        aiType: 'hunter'
+                    };
+                    npcs.push(ghostNpc);
+                    bornGhosts.push(ghostNpc);
+                }
+
+                roleVal.innerText = (currentLevel >= 16) ? '人類 (終結雙子生存戰!)' : '人類 (生存戰)';
+                roleVal.style.color = '#2ed573'; 
+                startBtn.style.background = '#2ed573';
+            } else {
+                // 🌟 核心修正：最後5關（16~20關）強制固定為 2 個敏捷人類，其餘關卡隨等級遞增
+                let humanCount = (currentLevel >= 16) ? 2 : (3 + Math.floor(currentLevel * 0.3)); 
+                
+                let humanSpeedRatio = 0.50 + ((currentLevel - 1) * (0.60 / 19));
+                let finalHumanSpeed = player.speed * humanSpeedRatio;
+
+                for (let i = 0; i < humanCount; i++) {
+                    let res = getSafeRandomPosition(5, false, bornHumans, bornGhosts);
+                    let humanNpc = {
+                        x: res.x, y: res.y,
+                        radius: 5,
+                        speed: finalHumanSpeed,
+                        color: '#2ed573', 
+                        aiType: 'flee'
+                    };
+                    npcs.push(humanNpc);
+                    bornHumans.push(humanNpc);
+                }
+
+                roleVal.innerText = (currentLevel >= 16) ? '惡鬼 (決戰雙子大狩獵!)' : '惡鬼 (時間競速)';
+                roleVal.style.color = '#ff4757'; 
+                startBtn.style.background = '#ff4757';
+            }
+
+            levelVal.innerText = currentLevel;
+            timeVal.innerText = timeLeft;
+            respawnHint.innerText = "戰鬥中";
+            respawnHint.style.color = "#2ed573";
+
+            clearInterval(gameTimer);
+            gameTimer = setInterval(() => {
+                timeLeft--;
+                levelTimeElapsed++;
+                timeVal.innerText = timeLeft;
+                
+                if (timeLeft <= 0) {
+                    endLevel(true); 
+                }
+            }, 1000);
+
+            gameActive = true;
+            gameLoop();
+        }
+
+        function gameLoop() {
+            if (!gameActive) return;
+
+            if (isInvulnerable) {
+                invulnerableTimer--;
+                if (invulnerableTimer <= 0) isInvulnerable = false;
+            }
+
+            updatePlayer();
+            updateNPCs();
+            checkCollisions();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        function updatePlayer() {
+            let nextX = player.x;
+            let nextY = player.y;
+
+            if (keys['arrowup'] || keys['w']) nextY -= player.speed;
+            if (keys['arrowdown'] || keys['s']) nextY += player.speed;
+            if (keys['arrowleft'] || keys['a']) nextX -= player.speed;
+            if (keys['arrowright'] || keys['d']) nextX += player.speed;
+
+            if (nextX - player.radius < 0) nextX = player.radius;
+            if (nextX + player.radius > canvas.width) nextX = canvas.width - player.radius;
+            if (nextY - player.radius < 0) nextY = player.radius;
+            if (nextY + player.radius > canvas.height) nextY = canvas.height - player.radius;
+
+            let res = checkObstacleCollision(nextX, nextY, player.radius);
+            player.x = res.x;
+            player.y = res.y;
+        }
+
+        function updateNPCs() {
+            npcs.forEach(npc => {
+                let dx = player.x - npc.x;
+                let dy = player.y - npc.y;
+                let distance = Math.hypot(dx, dy);
+                let nextX = npc.x;
+                let nextY = npc.y;
+
+                if (npc.aiType === 'hunter') {
+                    if (distance > 0 && !isInvulnerable) {
+                        // 想要前進的理想方向
+                        let targetDirX = dx / distance;
+                        let targetDirY = dy / distance;
+
+                        // 模擬試探性下一步，確認是否會卡在白色碎石上
+                        let testX = npc.x + targetDirX * npc.speed;
+                        let testY = npc.y + targetDirY * npc.speed;
+                        let collisionCheck = checkObstacleCollision(testX, testY, npc.radius);
+
+                        if (collisionCheck.collided) {
+                            // 🌟 障礙物導航升級：如果會卡住，計算與碎石法向量垂直的切線滑行方向
+                            // 法向量為 (collisionCheck.nX, collisionCheck.nY)
+                            // 兩種切線方向：(-nY, nX) 與 (nY, -nX)，選擇與追擊目標夾角較小的那一條
+                            let tangent1X = -collisionCheck.nY;
+                            let tangent1Y = collisionCheck.nX;
+                            
+                            // 利用內積判定哪條切線更接近玩家坐標
+                            let dot1 = tangent1X * targetDirX + tangent1Y * targetDirY;
+                            
+                            let slideX = tangent1X;
+                            let slideY = tangent1Y;
+                            if (dot1 < 0) {
+                                slideX = -tangent1X;
+                                slideY = -tangent1Y;
+                            }
+
+                            nextX += slideX * npc.speed;
+                            nextY += slideY * npc.speed;
+                        } else {
+                            // 無阻礙，直線瘋狂獵殺
+                            nextX = testX;
+                            nextY = testY;
+                        }
+                    } else {
+                        nextX += (Math.random() - 0.5) * npc.speed * 0.5;
+                        nextY += (Math.random() - 0.5) * npc.speed * 0.5;
+                    }
+                } else if (npc.aiType === 'flee') {
+                    if (distance > 0) {
+                        let fleeX = -(dx / distance);
+                        let fleeY = -(dy / distance);
+
+                        let nearLeft = (npc.x < 20);
+                        let nearRight = (npc.x > canvas.width - 20);
+                        let nearTop = (npc.y < 20);
+                        let nearBottom = (npc.y > canvas.height - 20);
+
+                        if ((nearLeft && fleeX < 0) || (nearRight && fleeX > 0)) {
+                            fleeX = 0; 
+                            fleeY = fleeY > 0 ? 1 : -1; 
+                        }
+                        if ((nearTop && fleeY < 0) || (nearBottom && fleeY > 0)) {
+                            fleeY = 0; 
+                            fleeX = fleeX > 0 ? 1 : -1; 
+                        }
+
+                        nextX += fleeX * npc.speed;
+                        nextY += fleeY * npc.speed;
+                    } else {
+                        nextX += (Math.random() - 0.5) * 1.0;
+                        nextY += (Math.random() - 0.5) * 1.0;
+                    }
+                }
+
+                if (nextX - npc.radius < 0) nextX = npc.radius;
+                if (nextX + npc.radius > canvas.width) nextX = canvas.width - npc.radius;
+                if (nextY - npc.radius < 0) nextY = npc.radius;
+                if (nextY + npc.radius > canvas.height) nextY = canvas.height - npc.radius;
+
+                let finalPos = checkObstacleCollision(nextX, nextY, npc.radius);
+                npc.x = finalPos.x;
+                npc.y = finalPos.y;
+            });
+        }
+
+        function checkCollisions() {
+            for (let i = npcs.length - 1; i >= 0; i--) {
+                let npc = npcs[i];
+                let dist = Math.hypot(player.x - npc.x, player.y - npc.y);
+
+                if (dist < player.radius + npc.radius) {
+                    if (playerRole === '人') {
+                        if (!isInvulnerable) {
+                            handlePlayerDeath(); 
+                        }
+                        return;
+                    } else {
+                        npcs.splice(i, 1);
+                        if (npcs.length === 0) {
+                            endLevel(false); 
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        function handlePlayerDeath() {
+            totalDeaths++;
+            
+            let bornGhosts = npcs; 
+            let res = getSafeRandomPosition(player.radius, false, [], bornGhosts);
+            player.x = res.x; player.y = res.y;
+
+            isInvulnerable = true;
+            invulnerableTimer = 60; 
+            
+            respawnHint.innerText = `復活！(💀×${totalDeaths})`;
+            respawnHint.style.color = "#ff4757";
+            setTimeout(() => { if(gameActive) { respawnHint.innerText = "戰鬥中"; respawnHint.style.color = "#2ed573"; } }, 1000);
+        }
+
+        function endLevel(timeOutTriggered) {
+            gameActive = false;
+            clearInterval(gameTimer);
+
+            let levelWeight = 0; 
+
+            if (playerRole === '人') {
+                let base = 5.0;
+                let penalty = totalDeaths * 1.5;
+                levelWeight = base - penalty;
+                if (levelWeight < 0) levelWeight = 0;
+            } else {
+                if (!timeOutTriggered && npcs.length === 0) {
+                    levelWeight = (timeLeft / 30) * 5.0; 
+                } else {
+                    levelWeight = 0; 
+                }
+            }
+
+            totalScoreRaw += levelWeight;
+            nextLevelStage();
+        }
+
+        function nextLevelStage() {
+            if (currentLevel >= maxLevels) {
+                let finalScore = Math.min(100, Math.round(totalScoreRaw));
+                if (finalScore < 0) finalScore = 0;
+
+                overlayTitle.innerText = "🏆 終極宿命戰役：完美謝幕";
+                
+                let finalRank = "100分天選走位神";
+                if (finalScore < 90) finalRank = "黑白雙子獵殺大師";
+                if (finalScore < 75) finalRank = "高機動戰區老兵";
+                if (finalScore < 50) finalRank = "戰場幸運邊緣人";
+
+                overlayDesc.innerHTML = `
+                    陣營：<strong style='color:#1e90ff;'>【${playerRole}】</strong><br>
+                    最終結算總得分：<strong style='color:#2ed573; font-size:1.6rem;'>${finalScore} / 100</strong><br>
+                    ${playerRole === '人' ? `戰局總死亡數：<strong style='color:#ff4757;'>${totalDeaths} 次</strong>` : '成功突破滑行繞石AI，完成終結獵殺！'}<br>
+                    榮譽評價：<strong>${finalRank}</strong>
+                `;
+                startBtn.innerText = "重新點燃新宿命";
+                currentLevel = 1; 
+                totalScoreRaw = 0;
+                totalDeaths = 0;
+                playerRole = '未定';
+            } else {
+                currentLevel++;
+                overlayTitle.innerText = `🎉 第 ${currentLevel-1} 關突破`;
+                
+                let modeHint = (currentLevel >= 16) ? 
+                    `<span style='color:#ff4757; font-weight:bold;'>⚠️ 警告：即將進入最後5關「極限雙子戰」！場上只會保留2個頂尖死敵！</span>` : 
+                    `位置已重置，準備迎戰下一輪。`;
+
+                overlayDesc.innerHTML = `
+                    大戰場 <strong>${currentLevel-1}/20</strong> 關完成。<br>
+                    身分鎖定：<strong>【${playerRole}】</strong><br>
+                    ${modeHint}
+                `;
+                startBtn.innerText = "進入下一關";
+            }
+            menuOverlay.classList.remove('hidden');
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            ctx.strokeStyle = '#111111';
+            ctx.lineWidth = 0.5;
+            for(let i=0; i<canvas.width; i+=25) {
+                ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, canvas.height); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(canvas.width, i); ctx.stroke();
+            }
+
+            ctx.fillStyle = '#ffffff';
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 1;
+            obstacles.forEach(obs => {
+                if (obs.type === 'rect') {
+                    ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+                } else if (obs.type === 'circle') {
+                    ctx.beginPath();
+                    ctx.arc(obs.x, obs.y, obs.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.closePath();
+                }
+            });
+
+            npcs.forEach(npc => {
+                ctx.beginPath();
+                ctx.arc(npc.x, npc.y, npc.radius, 0, Math.PI * 2);
+                ctx.fillStyle = npc.color;
+                ctx.shadowBlur = 6;
+                ctx.shadowColor = npc.color;
+                ctx.fill();
+                ctx.closePath();
+            });
+
+            ctx.beginPath();
+            ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+            
+            if (isInvulnerable && Math.floor(Date.now() / 100) % 2 === 0) {
+                ctx.fillStyle = 'rgba(30, 144, 255, 0.2)';
+            } else {
+                ctx.fillStyle = player.color;
+            }
+            
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = player.color;
+            ctx.fill();
+            ctx.closePath();
+            
+            ctx.shadowBlur = 0;
+        }
+    </script>
+</body>
+</html>
