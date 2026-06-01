@@ -29,7 +29,7 @@
             margin-bottom: 8px; font-size: 0.9rem;
             background: #2d2d2d; padding: 8px 15px;
             border-radius: 8px; border: 1px solid #3d3d3d;
-            width: 360px; box-sizing: border-box; margin: 0 auto 8px auto;
+            width: 380px; box-sizing: border-box; margin: 0 auto 8px auto;
         }
 
         .hud-row { display: flex; justify-content: space-between; align-items: center; }
@@ -62,8 +62,10 @@
         .btn:hover { background: #ff6b81; transform: scale(1.03); }
         
         /* HUD 功能小按鈕 */
-        .btn-group { display: flex; gap: 5px; }
-        .btn-hud-small { border: none; color: white; padding: 4px 8px; font-size: 0.75rem; font-weight: bold; border-radius: 4px; cursor: pointer; }
+        .btn-group { display: flex; gap: 4px; }
+        .btn-hud-small { border: none; color: white; padding: 4px 6px; font-size: 0.75rem; font-weight: bold; border-radius: 4px; cursor: pointer; }
+        #hud-skip-btn { background: #1e90ff; }
+        #hud-skip-btn:hover { background: #70a1ff; }
         #hud-restart-btn { background: #ffa502; }
         #hud-restart-btn:hover { background: #ffb142; }
         #hud-change-role-btn { background: #5352ed; }
@@ -121,6 +123,7 @@
             <div class="hud-row" style="margin-top: 4px;">
                 <div>狀態: <span id="respawn-hint" style="color: #2ed573;">準備中</span></div>
                 <div class="btn-group">
+                    <button class="btn-hud-small" id="hud-skip-btn">⏩ 跳關</button>
                     <button class="btn-hud-small" id="hud-restart-btn">🔄 重開</button>
                     <button class="btn-hud-small" id="hud-change-role-btn">🎭 換陣營</button>
                 </div>
@@ -178,6 +181,7 @@
         const roleVal = document.getElementById('role-val');
         const timeVal = document.getElementById('time-val');
         const respawnHint = document.getElementById('respawn-hint');
+        const hudSkipBtn = document.getElementById('hud-skip-btn');
         const hudRestartBtn = document.getElementById('hud-restart-btn');
         const hudChangeRoleBtn = document.getElementById('hud-change-role-btn');
 
@@ -246,6 +250,35 @@
         }
 
         renderLeaderboard('leaderboard-init');
+
+        // 🌟 核心新增：跳關扣分機制
+        function triggerSkipLevel() {
+            if (!gameActive) return;
+            if (currentLevel >= maxLevels) {
+                alert("已達最終關卡，無法再使用跳關功能！");
+                return;
+            }
+
+            let confirmSkip = confirm(`確定要跳過第 ${currentLevel} 關嗎？\n代價：總分將會依比例倒扣 35%！`);
+            if (confirmSkip) {
+                gameActive = false;
+                clearInterval(gameTimer);
+                
+                // 扣除目前總分的 35%
+                let oldScore = Math.round(totalScoreRaw);
+                totalScoreRaw = totalScoreRaw * 0.65;
+                let newScore = Math.round(totalScoreRaw);
+
+                currentLevel++; // 推進關卡
+                
+                msgOverlay.classList.remove('hidden');
+                leaderboardBox.classList.add('hidden');
+                msgTitle.innerText = `⏩ 已成功跳過關卡！`;
+                msgDesc.innerHTML = `你選擇避開了戰火，總分從 <strong>${oldScore}</strong> 扣減至 <strong style='color:#ff4757;'>${newScore}</strong> 分。<br>即將面臨第 <strong>${currentLevel}</strong> 關更嚴峻的挑戰！`;
+                msgNextBtn.innerText = "前進下一關";
+            }
+        }
+        hudSkipBtn.addEventListener('click', triggerSkipLevel);
 
         function triggerSameSetupRestart() {
             clearInterval(gameTimer);
@@ -361,7 +394,6 @@
             zone.addEventListener('touchend', stopJoystick); zone.addEventListener('touchcancel', stopJoystick);
         }
 
-        // 基礎實體碰撞與邊界彈回
         function checkObstacleCollision(x, y, radius) {
             let posX = x; let posY = y;
             obstacles.forEach(obs => {
@@ -383,7 +415,6 @@
             return { x: posX, y: posY };
         }
 
-        // 惡鬼 NPC 專用：尋路與局部避障
         function findObstacleAvoidanceForce(npc, targetVx, targetVy) {
             const lookAheadLength = 22; const whiskerAngle = 0.4;
             const whickers = [
@@ -519,7 +550,6 @@
             player.x = res.x; player.y = res.y;
         }
 
-        // 🌟 核心進化：NPC 人類 360 度極座標動態最佳路由演算機制
         function updateNPCs() {
             npcs.forEach(npc => {
                 let dx = player.x - npc.x; let dy = player.y - npc.y;
@@ -527,7 +557,6 @@
                 let nextX = npc.x; let nextY = npc.y;
 
                 if (npc.aiType === 'hunter') {
-                    // 追擊鬼 AI 保持原本的高效尋路
                     if (distToPlayer > 0) {
                         let targetVx = dx / distToPlayer; let targetVy = dy / distToPlayer;
                         let avoidForce = findObstacleAvoidanceForce(npc, targetVx, targetVy);
@@ -536,89 +565,61 @@
                         nextX += (finalVx / finalMag) * npc.speed; nextY += (finalVy / finalMag) * npc.speed;
                     }
                 } else if (npc.aiType === 'flee') {
-                    // 360 度極座標射線探測機制（共 16 個方向採樣）
                     const numDirections = 16;
                     let bestScore = -Infinity;
-                    let bestDirX = 0;
-                    let bestDirY = 0;
+                    let bestDirX = 0; let bestDirY = 0;
 
                     if (distToPlayer > 0) {
-                        let pDx = dx / distToPlayer; 
-                        let pDy = dy / distToPlayer;
+                        let pDx = dx / distToPlayer; let pDy = dy / distToPlayer;
 
                         for (let i = 0; i < numDirections; i++) {
                             let angle = (i / numDirections) * Math.PI * 2;
-                            let dirX = Math.cos(angle);
-                            let dirY = Math.sin(angle);
+                            let dirX = Math.cos(angle); let dirY = Math.sin(angle);
 
-                            // 1. 基礎遠離玩家評分（方向向量與「遠離向量」的重合度越接近 1 越高分）
                             let escapeScore = (-dirX * pDx) + (-dirY * pDy); 
-                            let totalScore = escapeScore * 120; // 基礎逃跑分
+                            let totalScore = escapeScore * 120;
 
-                            // 預測該方向跨出一步後的新座標
-                            let testX = npc.x + dirX * npc.speed * 4; // 向前預測 4 步距離
+                            let testX = npc.x + dirX * npc.speed * 4;
                             let testY = npc.y + dirY * npc.speed * 4;
 
-                            // 2. 地圖牆壁邊界懲罰（避免死卡在角落）
                             if (testX < 20 || testX > canvas.width - 20 || testY < 20 || testY > canvas.height - 20) {
-                                totalScore -= 400; // 重度扣分
+                                totalScore -= 400;
                             }
 
-                            // 3. 障礙物遮擋盲區深度加分
                             obstacles.forEach(obs => {
-                                // 計算 NPC 到此障礙物的距離
-                                let oDx = obs.cX - npc.x;
-                                let oDy = obs.cY - npc.y;
+                                let oDx = obs.cX - npc.x; let oDy = obs.cY - npc.y;
                                 let obsDist = Math.hypot(oDx, oDy);
 
-                                if (obsDist < 75) { // 感知範圍內的障礙物
-                                    // 核心演算法：判斷障礙物是否能阻擋玩家的視線
-                                    // 計算玩家到障礙物的向量
-                                    let pToObsX = obs.cX - player.x;
-                                    let pToObsY = obs.cY - player.y;
+                                if (obsDist < 75) {
+                                    let pToObsX = obs.cX - player.x; let pToObsY = obs.cY - player.y;
                                     let pToObsDist = Math.hypot(pToObsX, pToObsY);
 
                                     if (pToObsDist > 0) {
-                                        let pToObsNx = pToObsX / pToObsDist;
-                                        let pToObsNy = pToObsY / pToObsDist;
-
-                                        // 計算測試前進點與障礙物延伸遮擋線的吻合度
-                                        let testToObsX = testX - obs.cX;
-                                        let testToObsY = testY - obs.cY;
+                                        let pToObsNx = pToObsX / pToObsDist; let pToObsNy = pToObsY / pToObsDist;
+                                        let testToObsX = testX - obs.cX; let testToObsY = testY - obs.cY;
                                         let testToObsDist = Math.hypot(testToObsX, testToObsY);
 
                                         if (testToObsDist > 0) {
-                                            let tToObsNx = testToObsX / testToObsDist;
-                                            let tToObsNy = testToObsY / testToObsDist;
-
-                                            // 當測試前進方向能把 NPC 送到「玩家 -> 障礙物」的連線延長線上時（內積接近 1）
+                                            let tToObsNx = testToObsX / testToObsDist; let tToObsNy = testToObsY / testToObsDist;
                                             let coverMatch = (pToObsNx * tToObsNx) + (pToObsNy * tToObsNy);
                                             if (coverMatch > 0.6) {
-                                                // 完美掩體盲區！給予超高權重加分（且離障礙物恰當距離加最多）
                                                 totalScore += (coverMatch * 180) * (1.0 - (obsDist / 120));
                                             }
                                         }
                                     }
 
-                                    // 近距離防撞硬體懲罰
                                     if (obsDist < npc.radius + (obs.radius || Math.max(obs.width, obs.height) * 0.5) + 6) {
-                                        // 如果這個測試射線直直插向障礙物，扣分！
                                         let dotObstacle = (dirX * (oDx / obsDist)) + (dirY * (oDy / obsDist));
                                         if (dotObstacle > 0) totalScore -= 350;
                                     }
                                 }
                             });
 
-                            // 挑選出 360 度中權重總分最高的生存路線
                             if (totalScore > bestScore) {
-                                bestScore = totalScore;
-                                bestDirX = dirX;
-                                bestDirY = dirY;
+                                bestScore = totalScore; bestDirX = dirX; bestDirY = dirY;
                             }
                         }
-
-                        nextX += bestDirX * npc.speed;
-                        nextY += bestDirY * npc.speed;
+                        nextX += bestDirX * npc.speed; nextY += bestDirY * npc.speed;
                     }
                 }
 
